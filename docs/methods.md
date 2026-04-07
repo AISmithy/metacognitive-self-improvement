@@ -61,20 +61,26 @@ that generates future variants is itself an editable artefact.
 Each iteration proceeds as follows:
 
 1. **Parent selection.**  A parent is sampled from the archive using a
-   weighted distribution that combines exploitation (fitness), exploration
-   (meta-policy exploration scale), and novelty (generation depth).
+   weighted distribution combining exploitation (fitness), exploration
+   (meta-policy exploration scale), and weight-space novelty.  Novelty is
+   the mean Euclidean distance to the k=3 nearest neighbours in the 5D
+   weight space, normalised to [0, 1] across the archive and scaled by 0.30:
+   `novelty = 1.0 + normalised_knn_distance × 0.30`.  This grounds diversity
+   pressure in the actual parameter space rather than a generation-depth proxy.
 2. **Mutation.**  The parent's meta policy is applied to produce a child:
    error-pressure signals (false-positive and false-negative feature
    averages relative to the training distribution) drive directional weight
    updates; stochastic noise scaled by `exploration_scale` is added; the
    threshold is adjusted in the direction that reduces the dominant error
-   type.  All meta-policy parameters are updated in the same step (step
-   sizes, focus metric, memory notes).
+   type.  All meta-policy parameters are updated in the same step.
 3. **Evaluation.**  The child is scored on the full train set and the
    held-out test set.
 4. **Post-evaluation meta-adjustment.**  If the child improves over the
    parent, `exploration_scale` decreases (exploit the direction); otherwise
-   it increases (diversify).
+   it increases (diversify).  If no fitness improvement has occurred for
+   5 or more consecutive iterations, a stronger plateau restart nudge is
+   applied: `exploration_scale += 0.10` (vs normal +0.05) and `weight_step`
+   is reset to mid-range (0.13) to escape the local optimum.
 5. **Archive update.**  The child is unconditionally added to the archive.
 6. **Progress recording.**  Per-iteration metrics—child train/test
    accuracy, meta-policy parameters, mutation source—are appended to the
@@ -85,7 +91,7 @@ Each iteration proceeds as follows:
 The archive stores every discovered agent variant together with its
 evaluation scores and parent link.  Parent selection is weighted, not
 greedy, so lower-fitness variants with high exploration scale or high
-generational novelty can still be selected.  This "stepping stones"
+weight-space novelty can still be selected.  This "stepping stones"
 property allows the population to escape local optima that would trap a
 purely greedy hill-climber.
 
@@ -95,23 +101,23 @@ Three conditions are compared in the experiments (Section 4).
 
 | Condition | Archive selection | Meta-policy update |
 |---|---|---|
-| **HyperAgent** (full system) | Weighted from full archive | Adaptive each iteration |
-| **Baseline** (frozen meta) | Weighted from full archive | Fixed at seed values |
-| **No Archive** (greedy) | Always current best only | Adaptive each iteration |
+| `hyperagent` (full system) | Weighted from full archive | Adaptive each iteration |
+| `baseline` (frozen meta) | Weighted from full archive | Fixed at seed values |
+| `no_archive` (greedy) | Always current best only | Adaptive each iteration |
 
-In the **Baseline** condition all meta-policy parameters (focus metric,
+In the `baseline` condition all meta-policy parameters (focus metric,
 weight step, threshold step, exploration scale) are frozen at the values of
 the seed agent for the duration of the run.  Only the task policy (weights,
 threshold, review style) is allowed to evolve.  This condition isolates the
 contribution of meta-policy self-modification.
 
-In the **No Archive** condition the parent is always the single current best
+In the `no_archive` condition the parent is always the single current best
 agent, removing the stepping-stones mechanism.  This condition isolates the
 contribution of archive-based diversity.
 
 ## 3.6  Evaluation Protocol
 
-Each condition is run with five random seeds (seed ∈ {7, 20, 33, 46, 59})
+Each condition is run with five random seeds (seed ∈ {42, 123, 456, 789, 1011})
 for 40 iterations.  All results report the mean best train fitness and mean
 best test accuracy across seeds.  Because the domain is deterministic, seed
 variance arises entirely from the stochastic parent-selection and noise
@@ -128,19 +134,45 @@ Primary metrics:
   (before archive selection), showing per-step mutation quality.
 - **Meta-policy parameter trajectories**: weight step, threshold step, and
   exploration scale over iterations, used to verify that the meta policy is
-  adapting in the HyperAgent condition and frozen in the Baseline condition.
+  adapting in the `hyperagent` condition and frozen in the `baseline`
+  condition.
 
 All per-iteration metrics are written to `results/raw_metrics.csv` by
 `scripts/run_experiment.py` and plotted by `scripts/plot_results.py`.
 Figures are saved to `results/learning_curves.png` (primary learning curves)
 and `results/meta_policy_drift.png` (meta-policy parameter trajectories).
 
-## 3.7  Implementation Details
+## 3.7  Self-Improving Prompt Engine
+
+As an extension of the hyperagent framework to natural language, we implement
+a `PromptEngine` that treats a text prompt as the evolvable artefact.  The
+task policy is a code-reviewer prompt; the meta policy is the mutation
+strategy (gap-driven heuristic or LLM-guided).  Fitness is the normalised
+human rating: `(rating − 1) / 4.0`, mapping the 1–5 scale to [0.0, 1.0].
+
+Each iteration proceeds as follows:
+
+1. The active prompt is run against a codebase by the user.
+2. The user rates the output 1–5 and records strengths and gaps.
+3. `submit_review()` archives the current prompt + evaluation.
+4. Mutation produces an improved prompt via LLM (if configured) or the
+   heuristic fallback (prepend specificity directives for rating ≤ 2;
+   append gap-derived focus areas for rating = 3; reinforce primary
+   strength for rating ≥ 4).
+5. The improved prompt becomes active and is optionally written to disk.
+
+This demonstrates that the core hyperagent mechanism—evolving both the
+artefact and the strategy that improves it—generalises beyond numeric
+parameter spaces to natural-language artefacts with human-in-the-loop
+feedback.
+
+## 3.8  Implementation Details
 
 The backend is implemented in Python 3.11 with FastAPI (REST API) and
 SQLModel (SQLite persistence).  Each run is assigned a unique identifier;
 the full agent lineage, per-iteration metrics, and mutation events are
 persisted immediately so that experiments survive process restarts and can
-be resumed or exported at any point.  The React frontend provides a tabbed
-inspection interface with a live Runs tab for comparing saved experiments.
-Source code is available at https://github.com/AISmithy/hyperagents.
+be resumed or exported at any point.  There is no frontend; all interaction
+is via the REST API (`uvicorn app.main:app`) or the CLI scripts
+(`scripts/run_experiment.py`).  Source code is available at
+https://github.com/AISmithy/hyperagents.
