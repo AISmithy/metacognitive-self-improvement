@@ -48,4 +48,3 @@ if (-not (Test-Path $RunDir)) {
 }
 
 Stop-TrackedProcess -Name "backend" -PidFile (Join-Path $RunDir "backend.pid")
-Stop-TrackedProcess -Name "frontend" -PidFile (Join-Path $RunDir "frontend.pid")
