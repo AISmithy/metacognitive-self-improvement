@@ -23,23 +23,32 @@ function Stop-TrackedProcess {
     $processId = 0
     if (-not [int]::TryParse($raw, [ref]$processId)) {
         Write-Host "$Name pid file is invalid."
-        if (-not $KeepPidFiles) {
-            Remove-Item $PidFile -ErrorAction SilentlyContinue
-        }
+        if (-not $KeepPidFiles) { Remove-Item $PidFile -ErrorAction SilentlyContinue }
         return
     }
 
-    $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($process) {
-        Stop-Process -Id $processId -Force
-        Write-Host "Stopped $Name (PID $processId)."
+    # Kill the entire process tree so uvicorn's reloader child processes also stop.
+    $killed = $false
+    $tree = @($processId)
+    # Collect child PIDs (WMI)
+    $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $processId" -ErrorAction SilentlyContinue
+    foreach ($child in $children) { $tree += $child.ProcessId }
+
+    foreach ($procId in $tree) {
+        $p = Get-Process -Id $procId -ErrorAction SilentlyContinue
+        if ($p) {
+            Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
+            $killed = $true
+        }
+    }
+
+    if ($killed) {
+        Write-Host "Stopped $Name (PID $processId + $($tree.Count - 1) child(ren))."
     } else {
         Write-Host "$Name was not running."
     }
 
-    if (-not $KeepPidFiles) {
-        Remove-Item $PidFile -ErrorAction SilentlyContinue
-    }
+    if (-not $KeepPidFiles) { Remove-Item $PidFile -ErrorAction SilentlyContinue }
 }
 
 if (-not (Test-Path $RunDir)) {
