@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build / packaging
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Runtime artifacts — never commit
+hyperagents.db
+results/
+.run/
+
+# Environment / secrets
+.env
+.env.local
+*.env.local
+
+# Commit only cleaned experiment outputs and figures
+!experiments/
+!figures/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
